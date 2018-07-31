@@ -40,10 +40,12 @@ describe('1 IdP, 1 AS, mode 3', function() {
   let createRequestParams;
   const data = JSON.stringify({
     test: 'test',
+    withEscapedChar: 'test|fff||ss\\|NN\\\\|',
     arr: [1, 2, 3],
   });
 
   let requestId;
+  let requestMessageSalt;
 
   const requestStatusUpdates = [];
 
@@ -65,7 +67,7 @@ describe('1 IdP, 1 AS, mode 3', function() {
       data_request_list: [
         {
           service_id: 'bank_statement',
-          as_id_list: ['as1', 'as2', 'as3'],
+          as_id_list: ['as1'],
           min_as: 1,
           request_params: JSON.stringify({
             format: 'pdf',
@@ -184,12 +186,19 @@ describe('1 IdP, 1 AS, mode 3', function() {
       namespace: createRequestParams.namespace,
       identifier: createRequestParams.identifier,
       request_message: createRequestParams.request_message,
-      request_message_hash: hash(createRequestParams.request_message),
+      request_message_hash: hash(
+        createRequestParams.request_message +
+          incomingRequest.request_message_salt
+      ),
       requester_node_id: 'rp1',
       min_ial: createRequestParams.min_ial,
       min_aal: createRequestParams.min_aal,
       data_request_list: createRequestParams.data_request_list,
     });
+    expect(incomingRequest.request_message_salt).to.be.a('string').that.is.not
+      .empty;
+
+    requestMessageSalt = incomingRequest.request_message_salt;
   });
 
   it('IdP should create response (accept) successfully', async function() {
@@ -211,7 +220,7 @@ describe('1 IdP, 1 AS, mode 3', function() {
       status: 'accept',
       signature: createSignature(
         identity.accessors[0].accessorPrivateKey,
-        createRequestParams.request_message
+        createRequestParams.request_message + requestMessageSalt
       ),
       accessor_id: identity.accessors[0].accessorId,
     });
@@ -380,9 +389,11 @@ describe('1 IdP, 1 AS, mode 3', function() {
     expect(dataArr[0]).to.deep.include({
       source_node_id: 'as1',
       service_id: createRequestParams.data_request_list[0].service_id,
+      signature_sign_method: 'RSA-SHA256',
       data,
     });
     expect(dataArr[0].source_signature).to.be.a('string').that.is.not.empty;
+    expect(dataArr[0].data_salt).to.be.a('string').that.is.not.empty;
   });
 
   it('RP should receive 5 request status updates', function() {

@@ -1,5 +1,5 @@
+import crypto from 'crypto';
 import { expect } from 'chai';
-import forge from 'node-forge';
 
 import * as rpApi from '../../api/v2/rp';
 import * as idpApi from '../../api/v2/idp';
@@ -10,6 +10,7 @@ import {
   idp1EventEmitter,
   as1EventEmitter,
 } from '../../callback_server';
+import * as db from '../../db';
 import {
   createEventPromise,
   generateReferenceId,
@@ -18,12 +19,9 @@ import {
 } from '../../utils';
 import * as config from '../../config';
 
-describe('1 IdP, 1 AS, mode 1', function() {
+describe('Large AS data size, 1 IdP, 1 AS, mode 3', function() {
   let namespace;
   let identifier;
-
-  const keypair = forge.pki.rsa.generateKeyPair(2048);
-  const userPrivateKey = forge.pki.privateKeyToPem(keypair.privateKey);
 
   const rpReferenceId = generateReferenceId();
   const idpReferenceId = generateReferenceId();
@@ -41,11 +39,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
   const requestClosedPromise = createEventPromise(); // RP
 
   let createRequestParams;
-  const data = JSON.stringify({
-    test: 'test',
-    withEscapedChar: 'test|fff||ss\\|NN\\\\|',
-    arr: [1, 2, 3],
-  });
+  const data = crypto.randomBytes(1499995).toString('hex'); // 2999990 bytes in hex string
 
   let requestId;
   let requestMessageSalt;
@@ -53,16 +47,23 @@ describe('1 IdP, 1 AS, mode 1', function() {
   const requestStatusUpdates = [];
 
   before(function() {
-    namespace = 'cid';
-    identifier = '1234567890123';
+    // TODO: need to silence logger in api process to not go over test timeout limit
+    this.skip();
+
+    if (db.idp1Identities[0] == null) {
+      throw new Error('No created identity to use');
+    }
+
+    namespace = db.idp1Identities[0].namespace;
+    identifier = db.idp1Identities[0].identifier;
 
     createRequestParams = {
       reference_id: rpReferenceId,
       callback_url: config.RP_CALLBACK_URL,
-      mode: 1,
+      mode: 3,
       namespace,
       identifier,
-      idp_id_list: ['idp1'],
+      idp_id_list: [],
       data_request_list: [
         {
           service_id: 'bank_statement',
@@ -73,7 +74,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
           }),
         },
       ],
-      request_message: 'Test request message (data request) (mode 1)',
+      request_message: 'Test request message (data request) (mode 3)',
       min_ial: 1.1,
       min_aal: 1,
       min_idp: 1,
@@ -202,6 +203,11 @@ describe('1 IdP, 1 AS, mode 1', function() {
 
   it('IdP should create response (accept) successfully', async function() {
     this.timeout(10000);
+    const identity = db.idp1Identities.find(
+      (identity) =>
+        identity.namespace === namespace && identity.identifier === identifier
+    );
+
     const response = await idpApi.createResponse('idp1', {
       reference_id: idpReferenceId,
       callback_url: config.IDP1_CALLBACK_URL,
@@ -210,11 +216,13 @@ describe('1 IdP, 1 AS, mode 1', function() {
       identifier: createRequestParams.identifier,
       ial: 2.3,
       aal: 3,
+      secret: identity.accessors[0].secret,
       status: 'accept',
       signature: createSignature(
-        userPrivateKey,
+        identity.accessors[0].accessorPrivateKey,
         createRequestParams.request_message + requestMessageSalt
       ),
+      accessor_id: identity.accessors[0].accessorId,
     });
     expect(response.status).to.equal(202);
 
@@ -226,7 +234,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
     });
   });
 
-  it('RP should receive confirmed request status', async function() {
+  it('RP should receive confirmed request status with valid proofs', async function() {
     this.timeout(15000);
     const requestStatus = await requestStatusConfirmedPromise.promise;
     expect(requestStatus).to.deep.include({
@@ -246,7 +254,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
         },
       ],
       response_valid_list: [
-        { idp_id: 'idp1', valid_proof: null, valid_ial: null },
+        { idp_id: 'idp1', valid_proof: true, valid_ial: true },
       ],
     });
     expect(requestStatus).to.have.property('block_height');
@@ -272,7 +280,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
   });
 
   it('AS should send data successfully', async function() {
-    this.timeout(15000);
+    this.timeout(35000);
     const response = await asApi.sendData('as1', {
       requestId,
       serviceId: createRequestParams.data_request_list[0].service_id,
@@ -309,7 +317,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
         },
       ],
       response_valid_list: [
-        { idp_id: 'idp1', valid_proof: null, valid_ial: null },
+        { idp_id: 'idp1', valid_proof: true, valid_ial: true },
       ],
     });
     expect(requestStatus).to.have.property('block_height');
@@ -317,7 +325,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
   });
 
   it('RP should receive completed request status with received data count = 1', async function() {
-    this.timeout(15000);
+    this.timeout(50000);
     const requestStatus = await requestStatusCompletedPromise.promise;
     expect(requestStatus).to.deep.include({
       request_id: requestId,
@@ -336,7 +344,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
         },
       ],
       response_valid_list: [
-        { idp_id: 'idp1', valid_proof: null, valid_ial: null },
+        { idp_id: 'idp1', valid_proof: true, valid_ial: true },
       ],
     });
     expect(requestStatus).to.have.property('block_height');
@@ -363,7 +371,7 @@ describe('1 IdP, 1 AS, mode 1', function() {
         },
       ],
       response_valid_list: [
-        { idp_id: 'idp1', valid_proof: null, valid_ial: null },
+        { idp_id: 'idp1', valid_proof: true, valid_ial: true },
       ],
     });
     expect(requestStatus).to.have.property('block_height');

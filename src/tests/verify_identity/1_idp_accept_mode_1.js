@@ -33,6 +33,7 @@ describe('1 IdP, accept consent, mode 1', function() {
   let createRequestParams;
 
   let requestId;
+  let requestMessageSalt;
 
   const requestStatusUpdates = [];
 
@@ -48,7 +49,8 @@ describe('1 IdP, accept consent, mode 1', function() {
       identifier,
       idp_id_list: ['idp1'],
       data_request_list: [],
-      request_message: 'Test request message (mode 1)',
+      request_message:
+        'Test request message (mode 1) ทดสอบภาษาไทย should\\|be|able\\\\|to|send\\\\\\|this',
       min_ial: 1.1,
       min_aal: 1,
       min_idp: 1,
@@ -130,12 +132,19 @@ describe('1 IdP, accept consent, mode 1', function() {
       namespace: createRequestParams.namespace,
       identifier: createRequestParams.identifier,
       request_message: createRequestParams.request_message,
-      request_message_hash: hash(createRequestParams.request_message),
+      request_message_hash: hash(
+        createRequestParams.request_message +
+          incomingRequest.request_message_salt
+      ),
       requester_node_id: 'rp1',
       min_ial: createRequestParams.min_ial,
       min_aal: createRequestParams.min_aal,
       data_request_list: createRequestParams.data_request_list,
     });
+    expect(incomingRequest.request_message_salt).to.be.a('string').that.is.not
+      .empty;
+
+    requestMessageSalt = incomingRequest.request_message_salt;
   });
 
   it('IdP should create response (accept) successfully', async function() {
@@ -151,7 +160,7 @@ describe('1 IdP, accept consent, mode 1', function() {
       status: 'accept',
       signature: createSignature(
         userPrivateKey,
-        createRequestParams.request_message
+        createRequestParams.request_message + requestMessageSalt
       ),
     });
     expect(response.status).to.equal(202);
